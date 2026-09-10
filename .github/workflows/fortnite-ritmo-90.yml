@@ -1,0 +1,243 @@
+name: Fortnite - ritmo approvato - 90 secondi
+on:
+  push:
+    branches: ['media/fortnite-ritmo-90s-20260910']
+    paths: ['.github/workflows/fortnite-ritmo-90.yml']
+permissions:
+  contents: write
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare editor
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-dejavu-core python3-numpy
+      - name: Render complete episode
+        shell: bash
+        run: |
+          /usr/bin/python3 - <<'PY'
+          import json, math, pathlib, subprocess, time, urllib.request
+          from concurrent.futures import ThreadPoolExecutor
+          import numpy as np
+          root=pathlib.Path('work90').resolve(); root.mkdir(exist_ok=True)
+          out=pathlib.Path('exports/fortnite_ritmo_90s').resolve(); out.mkdir(parents=True,exist_ok=True)
+          urls={
+            'game.mp4':'https://cdn.creativeclaw.co/u/6d476340/videos/b2930477-53ae-473d-a80f-cd7021b8b69a.mp4',
+            'v1.mp3':'https://cdn.creativeclaw.co/u/6d476340/audio/23240968-0132-4260-90d8-ea48a32a7577.mp3',
+            'v2.mp3':'https://cdn.creativeclaw.co/u/6d476340/audio/54fe8c46-50c6-4ff7-9b18-7693ce68d243.mp3'}
+          for name,url in urls.items():
+            for attempt in range(3):
+              try:
+                req=urllib.request.Request(url,headers={'User-Agent':'FortniteEditor/2.0'})
+                with urllib.request.urlopen(req,timeout=90) as r,(root/name).open('wb') as f:
+                  while True:
+                    data=r.read(1024*1024)
+                    if not data: break
+                    f.write(data)
+                assert (root/name).stat().st_size>100000
+                break
+              except Exception:
+                if attempt==2: raise
+                time.sleep(2)
+          def run(args):
+            p=subprocess.run(args,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            if p.returncode:
+              raise RuntimeError(p.stderr.decode('utf-8',errors='replace')[-10000:])
+            return p.stdout
+          source=root/'game.mp4'
+          info=json.loads(run(['ffprobe','-v','error','-show_streams','-show_format','-of','json',str(source)]))
+          v=next(s for s in info['streams'] if s['codec_type']=='video')
+          assert (v['width'],v['height'])==(1112,512)
+          assert float(info['format']['duration'])>108
+          # The action, crop and unclipped complete phrases follow the approved 24-second study.
+          # Start, source duration, output duration, frozen-frame flag. Old files are never overwritten.
+          scenes=[(2,8,8,False),(15,9,9,False),(36,8,8,False),(48,8,8,False),
+                  (66,10,10,False),(77,10,10,False),(87.6,5.6,5.6,False),
+                  (93.2,11.5,11.5,False),(101.9,.066667,4.2,True),
+                  (96.4,4.8,6.4,False),(103,5,5,False),(36.8,4.3,4.3,False)]
+          assert abs(sum(s[2] for s in scenes)-90)<1e-6
+          def segment(item):
+            i,(start,srcdur,dur,frozen)=item
+            factor=dur/srcdur if not frozen else 1
+            graph=(f'[0:v:0]setpts={factor:.10f}*(PTS-STARTPTS),fps=30,setsar=1,split=2[b][f];'
+                   '[b]scale=180:320:force_original_aspect_ratio=increase,crop=180:320,'
+                   'boxblur=10:2,eq=brightness=-0.16:saturation=0.72,scale=720:1280[bg];'
+                   '[f]crop=420:480:346:16,scale=720:822:flags=lanczos,setsar=1[fg];'
+                   '[bg][fg]overlay=0:186,setsar=1,format=yuv420p')
+            if frozen: graph+=f',trim=end_frame=1,setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration={dur}'
+            graph+='[v]'
+            dest=root/f's{i:02}.mp4'
+            run(['ffmpeg','-v','error','-y','-filter_complex_threads','1','-ss',str(start),'-t',str(srcdur),'-i',str(source),
+                 '-filter_complex',graph,'-map','[v]','-an','-t',str(dur),'-r','30','-c:v','libx264','-threads','2',
+                 '-preset','veryfast','-crf','18','-pix_fmt','yuv420p','-video_track_timescale','15360',str(dest)])
+            print('Scene ready',i,dur,flush=True)
+            return dest
+          with ThreadPoolExecutor(max_workers=2) as pool:
+            clips=list(pool.map(segment,enumerate(scenes)))
+          (root/'concat.txt').write_text(''.join("file '"+str(p)+"'\n" for p in clips))
+          pictures=root/'pictures.mp4'
+          run(['ffmpeg','-v','error','-y','-f','concat','-safe','0','-i',str(root/'concat.txt'),'-map','0:v:0','-c:v','copy','-an',str(pictures)])
+          sr=48000; n=90*sr
+          # Audio is mixed offline, avoiding timestamp discontinuities from fragmented filter graphs.
+          def decode(path,start=None,duration=None,speed=1,channels=1):
+            cmd=['ffmpeg','-v','error']
+            if start is not None: cmd+=['-ss',str(start)]
+            if duration is not None: cmd+=['-t',str(duration)]
+            cmd+=['-i',str(path),'-vn']
+            if abs(speed-1)>1e-9: cmd+=['-af',f'atempo={speed:.9f}']
+            cmd+=['-ac',str(channels),'-ar',str(sr),'-f','f32le','pipe:1']
+            x=np.frombuffer(run(cmd),dtype='<f4').copy()
+            return x.reshape(-1,channels) if channels>1 else x
+          game=np.zeros((n,2),np.float32); offset=0
+          for start,srcdur,dur,frozen in scenes:
+            count=round(dur*sr)
+            if not frozen:
+              a=decode(source,start,srcdur,srcdur/dur,2)
+              a=a[:count]
+              f=min(round(.018*sr),len(a)//2)
+              a[:f]*=np.sin(np.linspace(0,np.pi/2,f,dtype=np.float32))[:,None]**2
+              a[-f:]*=np.cos(np.linspace(0,np.pi/2,f,dtype=np.float32))[:,None]**2
+              game[offset:offset+len(a)]=a
+            offset+=count
+          voices={k:decode(root/(k+'.mp3')) for k in ('v1','v2')}
+          # Every take contains a whole spoken thought. No word splicing, time-stretch or pitch change.
+          cues=[('v1',5.50,8.50,.45,'Io parto convinto: oggi faccio una strage.'),
+                ('v2',7.70,9.32,9.10,'Mi sento già fortissimo.'),
+                ('v1',8.50,13.72,17.45,'Salto dal bus, scelgo dove atterrare... cioè, vado dove mi porta il vento.'),
+                ('v1',24.55,27.02,26.15,'Calma, ho tutto sotto controllo.'),
+                ('v2',18.38,22.75,43.35,'Prima, però, devo raccogliere tutto. Anche roba che non so usare.'),
+                ('v2',28.08,31.35,59.00,'Eccolo! Calma, stavolta lo prendo.'),
+                ('v2',36.40,38.45,66.52,'E niente, morto di nuovo.'),
+                ('v2',41.70,45.30,70.65,'Voto alla mira: due. Alla fiducia: dieci.'),
+                ('v1',48.17,51.15,75.40,'Fiducia da campione, mira da tostapane.'),
+                ('v2',45.35,48.56,81.15,'Scrivimi un consiglio, che qui serve un miracolo.')]
+          voice=np.zeros(n,np.float32); envelope=np.zeros(9000,np.float32); metrics=[]
+          source_gains={}
+          for key,x in voices.items():
+            voiced=x[np.abs(x)>.015]
+            rms=float(np.sqrt(np.mean(voiced**2)))
+            source_gains[key]=min(1.5,max(.65,.16/max(rms,1e-6)))
+          for key,a,b,at,text in cues:
+            s=voices[key][round(a*sr):round(b*sr)].copy()*source_gains[key]
+            fade_in=min(round(.012*sr),len(s)//2); fade_out=min(round(.025*sr),len(s)//2)
+            s[:fade_in]*=np.sin(np.linspace(0,np.pi/2,fade_in,dtype=np.float32))**2
+            s[-fade_out:]*=np.cos(np.linspace(0,np.pi/2,fade_out,dtype=np.float32))**2
+            dst=round(at*sr); voice[dst:dst+len(s)]+=s
+            envelope[max(0,round((at-.13)*100)):min(9000,round((at+len(s)/sr+.18)*100))]=1
+            rms=float(np.sqrt(np.mean(s*s)))
+            assert rms>.012,(text,rms)
+            metrics.append({'at':at,'duration':len(s)/sr,'text':text,'rms':rms})
+          smooth=np.convolve(envelope,np.ones(25,np.float32)/25,mode='same')
+          duck=np.interp(np.arange(n)/sr,np.arange(9000)/100,.34-.24*smooth).astype(np.float32)
+          mixed=game*duck[:,None]+voice[:,None]
+          # No noisy loop under the subscribe ending; leave a natural fade into the final card.
+          s=round(85.45*sr);e=round(85.75*sr)
+          mixed[s:e]*=np.linspace(1,0,e-s,dtype=np.float32)[:,None];mixed[e:]=0
+          peak=float(np.max(np.abs(mixed)))
+          if peak>.94: mixed*=.94/peak
+          wav=root/'audio.wav'
+          subprocess.run(['ffmpeg','-v','error','-y','-f','f32le','-ar',str(sr),'-ac','2','-i','pipe:0','-c:a','pcm_s16le',str(wav)],input=mixed.astype('<f4').tobytes(),check=True)
+          def stamp(t):
+            cs=round(t*100);return f'{cs//360000}:{cs//6000%60:02}:{cs//100%60:02}.{cs%100:02}'
+          header='''[Script Info]
+          ScriptType: v4.00+
+          PlayResX: 720
+          PlayResY: 1280
+          ScaledBorderAndShadow: yes
+          WrapStyle: 0
+          
+          [V4+ Styles]
+          Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+          Style: Sub,DejaVu Sans,35,&H00FFFFFF,&H00FFFFFF,&H00100F10,&H860B0808,-1,0,0,0,100,100,0,0,1,2.5,1,5,38,60,0,1
+          Style: Label,DejaVu Sans,17,&H00FFFFFF,&H00FFFFFF,&H30101010,&H00000000,-1,0,0,0,100,100,1,0,1,0.7,0,5,40,60,0,1
+          Style: Head,DejaVu Sans,35,&H00FFFFFF,&H00FFFFFF,&H00101010,&H00000000,-1,0,0,0,100,100,0,0,1,2,0,5,36,56,0,1
+          Style: Big,DejaVu Sans,66,&H007FF5CC,&H007FF5CC,&H00101010,&H00000000,-1,0,0,0,100,100,0,0,1,3,0,5,40,60,0,1
+          
+          [Events]
+          Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+          '''
+          events=[]
+          def add(a,b,style,text,x=350,y=1084,size=None):
+            tag=f'\\an5\\pos({x},{y})\\fad(75,90)'
+            if size:tag+=f'\\fs{size}'
+            text=text.replace('\n','\\N')
+            events.append(f'Dialogue: 2,{stamp(a)},{stamp(b)},{style},,0,0,0,,{{{tag}}}{text}')
+          add(0,85.7,'Label','FORTNITE  /  DIARIO DI UN NOOB',y=65)
+          add(0,4.1,'Head','FIDUCIA DA PRO.',y=131)
+          add(.54,3.39,'Sub','Io parto convinto:\noggi faccio una strage.')
+          add(9.13,10.70,'Sub','Mi sento già fortissimo.')
+          add(11.8,16.6,'Head','LORO SI ALLENANO.\nIO FACCIO IL BAGNO.',y=128,size=26)
+          add(17.55,20.23,'Sub','Salto dal bus,\nscelgo dove atterrare...')
+          add(20.24,22.67,'Sub','Cioè, vado dove\nmi porta il vento.')
+          add(26.35,28.54,'Sub','Calma, ho tutto\nsotto controllo.')
+          add(33.65,38.45,'Head','DESTINAZIONE: VITTORIA.\nGPS: NON DISPONIBILE.',y=129,size=26)
+          add(43.46,45.75,'Sub','Prima, però,\ndevo raccogliere tutto.')
+          add(45.91,47.65,'Sub','Anche roba\nche non so usare.')
+          add(48.35,51.9,'Head','L’INVENTARIO È PIENO.\nIL PIANO UN PO’ MENO.',y=130,size=26)
+          add(54.0,57.3,'Head','ORA FACCIO SUL SERIO.',y=131,size=28)
+          add(59.12,60.0,'Sub','Eccolo!')
+          add(60.16,62.10,'Sub','Calma, stavolta lo prendo.')
+          add(66.65,68.51,'Sub','E niente. Morto di nuovo.')
+          add(69.0,70.05,'Head','OTTIMO PIANO.',y=133,size=28)
+          add(70.82,72.04,'Sub','Voto alla mira: due.')
+          add(72.18,74.12,'Sub','Alla fiducia: dieci.')
+          add(74.4,80.65,'Label','REPLAY  /  0,75x',y=130,size=23)
+          add(75.7,78.30,'Sub','Fiducia da campione,\nmira da tostapane.')
+          add(81.35,84.34,'Sub','Scrivimi un consiglio,\nche qui serve un miracolo.')
+          add(0,85.7,'Label','VERSO 1.000 ISCRITTI',y=1170,size=19)
+          add(85.75,90,'Head','LA SERIE CONTINUA.',y=300,size=36)
+          add(85.75,90,'Head','CI AIUTI AD ARRIVARE A',y=505,size=27)
+          add(85.75,90,'Big','1.000',y=610,size=94)
+          add(85.75,90,'Head','ISCRITTI?',y=700,size=44)
+          add(85.75,90,'Label','ISCRIVITI. ALLA MIRA CI PENSIAMO DOPO.',y=820,size=21)
+          ass=root/'titles.ass'; ass.write_text('\n'.join(line.strip() for line in header.splitlines())+'\n'+'\n'.join(events)+'\n',encoding='utf-8')
+          dest=out/'Fortnite_90s_Ritmo_Fluido.mp4'
+          vf=("drawbox=x=0:y=200:w=720:h=850:color=black@0.64:t=fill:enable='gte(t,85.7)',"
+              f'ass={ass},setsar=1,format=yuv420p')
+          run(['ffmpeg','-v','warning','-y','-i',str(pictures),'-i',str(wav),'-map','0:v:0','-map','1:a:0',
+               '-vf',vf,'-c:v','libx264','-threads','2','-preset','fast','-crf','21','-maxrate','2400k','-bufsize','4800k',
+               '-profile:v','high','-level:v','3.1','-pix_fmt','yuv420p','-c:a','aac','-b:a','160k','-ar','48000','-ac','2',
+               '-t','90','-movflags','+faststart','-metadata','title=Fortnite - Fiducia da pro, mira da noob - 90 secondi',
+               '-metadata','comment=Episodio separato basato sul ritmo approvato. Stessa voce AI in frasi intere a velocita originale. Obiettivo 1000 iscritti a schermo.',
+               '-metadata:s:a:0','language=ita',str(dest)])
+          check=json.loads(run(['ffprobe','-v','error','-show_format','-show_streams','-of','json',str(dest)]))
+          video=next(s for s in check['streams'] if s['codec_type']=='video')
+          audio=next(s for s in check['streams'] if s['codec_type']=='audio')
+          assert abs(float(check['format']['duration'])-90)<.04
+          assert abs(float(audio['duration'])-90)<.04
+          assert (video['width'],video['height'],video['sample_aspect_ratio'])==(720,1280,'1:1')
+          assert int(video['nb_frames'])==2700
+          run(['ffmpeg','-v','error','-i',str(dest),'-f','null','-'])
+          decoded=decode(dest,channels=1)
+          voice_checks=[]
+          for m in metrics:
+            a=round(m['at']*sr);b=round((m['at']+m['duration'])*sr)
+            r=float(np.sqrt(np.mean(decoded[a:b]**2)))
+            assert r>.009,(m['text'],r)
+            voice_checks.append({'start':m['at'],'rms':r})
+          report={'filename':dest.name,'duration_seconds':90,'width':720,'height':1280,'frames':2700,
+                  'audio_seconds':float(audio['duration']),'size_bytes':dest.stat().st_size,'complete_decode':'passed',
+                  'voice':'Existing Italian Mark voice, complete takes, no speed or pitch modification',
+                  'subscriber_goal':'1000, on screen and in final card','voice_segments':metrics,
+                  'encoded_voice_checks':voice_checks,'scene_lengths':[s[2] for s in scenes]}
+          (out/'verifica.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+          print('COMPLETE AND VERIFIED',json.dumps(report,ensure_ascii=False),flush=True)
+          PY
+      - name: Save downloadable finished export
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add exports/fortnite_ritmo_90s/Fortnite_90s_Ritmo_Fluido.mp4 exports/fortnite_ritmo_90s/verifica.json
+          git commit -m 'Save finished 90-second Fortnite video with complete voice takes'
+          git push origin HEAD:media/fortnite-ritmo-90s-20260910
+      - name: Keep export backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: Fortnite_90s_Ritmo_Fluido
+          path: exports/fortnite_ritmo_90s/
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
