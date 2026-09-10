@@ -1,0 +1,130 @@
+{
+  "filename": "Fortnite_90s_Ritmo_Fluido.mp4",
+  "duration_seconds": 90,
+  "width": 720,
+  "height": 1280,
+  "frames": 2700,
+  "audio_seconds": 90.0,
+  "size_bytes": 26867465,
+  "complete_decode": "passed",
+  "voice": "Existing Italian Mark voice, complete takes, no speed or pitch modification",
+  "subscriber_goal": "1000, on screen and in final card",
+  "voice_segments": [
+    {
+      "at": 0.45,
+      "duration": 3.0,
+      "text": "Io parto convinto: oggi faccio una strage.",
+      "rms": 0.13740423321723938
+    },
+    {
+      "at": 9.1,
+      "duration": 1.62,
+      "text": "Mi sento già fortissimo.",
+      "rms": 0.11349271982908249
+    },
+    {
+      "at": 17.45,
+      "duration": 5.22,
+      "text": "Salto dal bus, scelgo dove atterrare... cioè, vado dove mi porta il vento.",
+      "rms": 0.12843631207942963
+    },
+    {
+      "at": 26.15,
+      "duration": 2.47,
+      "text": "Calma, ho tutto sotto controllo.",
+      "rms": 0.10108530521392822
+    },
+    {
+      "at": 43.35,
+      "duration": 4.37,
+      "text": "Prima, però, devo raccogliere tutto. Anche roba che non so usare.",
+      "rms": 0.1325119137763977
+    },
+    {
+      "at": 59.0,
+      "duration": 3.27,
+      "text": "Eccolo! Calma, stavolta lo prendo.",
+      "rms": 0.10480917990207672
+    },
+    {
+      "at": 66.52,
+      "duration": 2.05,
+      "text": "E niente, morto di nuovo.",
+      "rms": 0.10167188197374344
+    },
+    {
+      "at": 70.65,
+      "duration": 3.6,
+      "text": "Voto alla mira: due. Alla fiducia: dieci.",
+      "rms": 0.11431363970041275
+    },
+    {
+      "at": 75.4,
+      "duration": 2.98,
+      "text": "Fiducia da campione, mira da tostapane.",
+      "rms": 0.13236989080905914
+    },
+    {
+      "at": 81.15,
+      "duration": 3.21,
+      "text": "Scrivimi un consiglio, che qui serve un miracolo.",
+      "rms": 0.12163805961608887
+    }
+  ],
+  "encoded_voice_checks": [
+    {
+      "start": 0.45,
+      "rms": 0.1938934624195099
+    },
+    {
+      "start": 9.1,
+      "rms": 0.1604459583759308
+    },
+    {
+      "start": 17.45,
+      "rms": 0.18349552154541016
+    },
+    {
+      "start": 26.15,
+      "rms": 0.14636924862861633
+    },
+    {
+      "start": 43.35,
+      "rms": 0.18668998777866364
+    },
+    {
+      "start": 59.0,
+      "rms": 0.1474161595106125
+    },
+    {
+      "start": 66.52,
+      "rms": 0.1446121633052826
+    },
+    {
+      "start": 70.65,
+      "rms": 0.16102252900600433
+    },
+    {
+      "start": 75.4,
+      "rms": 0.18670277297496796
+    },
+    {
+      "start": 81.15,
+      "rms": 0.17167210578918457
+    }
+  ],
+  "scene_lengths": [
+    8,
+    9,
+    8,
+    8,
+    10,
+    10,
+    5.6,
+    11.5,
+    4.2,
+    6.4,
+    5,
+    4.3
+  ]
+}
