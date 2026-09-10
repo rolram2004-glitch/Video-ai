@@ -1,0 +1,103 @@
+name: Export Fortnite episodes 2 and 3
+on:
+  push:
+    branches: ['media/fortnite-ep02-ep03-20260910']
+    paths: ['.github/workflows/fortnite-episodes.yml']
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Prepare FFmpeg
+        run: |
+          if ! command -v ffmpeg >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ffmpeg
+          fi
+      - name: Render the two final videos
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import array, json, math, os, pathlib, subprocess, sys, time, urllib.request, wave
+          root = pathlib.Path('work'); root.mkdir(exist_ok=True)
+          out = pathlib.Path('finished'); out.mkdir(exist_ok=True)
+          urls = {
+            'ep2.mp4': 'https://cdn.creativeclaw.co/u/6d476340/videos/8b4b667d-ed95-4b1f-9523-cddd4bf18592.mp4',
+            'ep3.mp4': 'https://cdn.creativeclaw.co/u/6d476340/videos/5a37e89a-b511-4e3a-8862-01d7a7391a74.mp4',
+            'v1.mp3': 'https://cdn.creativeclaw.co/u/6d476340/audio/23240968-0132-4260-90d8-ea48a32a7577.mp3',
+            'v2.mp3': 'https://cdn.creativeclaw.co/u/6d476340/audio/54fe8c46-50c6-4ff7-9b18-7693ce68d243.mp3'
+          }
+          for name, url in urls.items():
+            target = root/name
+            for attempt in range(3):
+              try:
+                req = urllib.request.Request(url, headers={'User-Agent':'FortniteVideoEditor/1.0'})
+                with urllib.request.urlopen(req, timeout=90) as response, target.open('wb') as f:
+                  while True:
+                    block=response.read(1024*1024)
+                    if not block: break
+                    f.write(block)
+                if target.stat().st_size < 100000: raise RuntimeError('Media file too small')
+                print('Source downloaded:',name,target.stat().st_size,flush=True)
+                break
+              except Exception:
+                if attempt==2: raise
+                time.sleep(2)
+          sr=48000
+          sources={}
+          for key in ['v1','v2']:
+            data=subprocess.check_output(['ffmpeg','-v','error','-i',str(root/(key+'.mp3')),'-vn','-ac','1','-ar',str(sr),'-f','f32le','pipe:1'])
+            samples=array.array('f'); samples.frombytes(data)
+            if sys.byteorder!='little': samples.byteswap()
+            sources[key]=samples
+          cues={
+            2:[('v1',0,.83,.13),('v1',5.55,8.4,2.6),('v2',7.72,9.3,8.1),('v1',8.55,13.7,12.1),('v1',24.55,27.01,20.1),('v2',18.43,22.7,26.2),('v1',16.24,17.67,31.2),('v2',28.1,31.17,38.6),('v2',36.48,38.39,42.2),('v1',48.2,51.05,49.6),('v2',45.4,48.56,54.5)],
+            3:[('v2',2.48,5.68,.1),('v1',27.04,31.56,4.15),('v2',5.72,9.3,9.1),('v2',9.52,10.86,13.1),('v2',11.31,13.89,15.1),('v2',14.12,18.21,19.2),('v2',18.43,22.7,24.15),('v2',22.83,24.85,30.1),('v2',25.42,27.97,32.2),('v1',16.24,17.68,35.4),('v2',31.9,36.22,38.1),('v2',38.63,41.18,44.2),('v2',41.73,45.25,48.3),('v1',51.48,55.20,54.1)]
+          }
+          titles={2:'Vacanza_lampo',3:'Compagno_o_badante'}
+          report={}
+          for ep,segments in cues.items():
+            canvas=array.array('f',[0.0])*(60*sr)
+            metrics=[]
+            for source,a,b,start in segments:
+              segment=sources[source][round(a*sr):round(b*sr)]
+              fade=min(round(.008*sr),len(segment)//2)
+              for i in range(fade):
+                segment[i]*=i/fade
+                segment[-1-i]*=i/fade
+              dst=round(start*sr); count=min(len(segment),len(canvas)-dst)
+              canvas[dst:dst+count]=segment[:count]
+              rms=math.sqrt(sum(x*x for x in segment)/max(1,len(segment)))
+              if rms<.001: raise RuntimeError('Silent narration segment: '+repr((ep,source,a,b,start,rms)))
+              metrics.append({'start':start,'duration':count/sr,'rms':rms})
+            pcm=array.array('h',(round(max(-1.0,min(.999969,x))*32767) for x in canvas))
+            if sys.byteorder!='little': pcm.byteswap()
+            narration=root/('narration'+str(ep)+'.wav')
+            with wave.open(str(narration),'wb') as w:
+              w.setnchannels(1); w.setsampwidth(2); w.setframerate(sr); w.writeframes(pcm.tobytes())
+            target=out/('Fortnite_EP'+str(ep)+'_'+titles[ep]+'_CON_VOCE.mp4')
+            graph='[0:a]volume=0.55,aresample=48000,asetpts=N/SR/TB[bed];[1:a]highpass=f=70,loudnorm=I=-16:TP=-2:LRA=9,aresample=48000,asetpts=N/SR/TB[voice];[bed][voice]amix=inputs=2:duration=longest:normalize=0,asetpts=N/SR/TB,alimiter=limit=0.94:level=0,asetpts=N/SR/TB,apad=whole_dur=60,atrim=duration=60[a]'
+            subprocess.run(['ffmpeg','-v','warning','-y','-i',str(root/('ep'+str(ep)+'.mp4')),'-i',str(narration),'-filter_complex',graph,'-map','0:v:0','-map','[a]','-c:v','copy','-bsf:v','h264_metadata=sample_aspect_ratio=1/1','-aspect','9:16','-c:a','aac','-b:a','192k','-ar','48000','-ac','2','-t','60','-metadata','title=Fortnite EP'+str(ep)+' - '+titles[ep].replace('_',' '),'-metadata','comment=Stessa voce precedente rimontata. Gag nuove e obiettivo 1000 iscritti a schermo.','-metadata:s:a:0','language=ita','-movflags','+faststart',str(target)],check=True)
+            info=json.loads(subprocess.check_output(['ffprobe','-v','error','-show_streams','-show_format','-of','json',str(target)]))
+            videos=[s for s in info['streams'] if s['codec_type']=='video']; audios=[s for s in info['streams'] if s['codec_type']=='audio']
+            assert len(videos)==len(audios)==1
+            assert videos[0]['width']==1080 and videos[0]['height']==1920
+            assert videos[0]['sample_aspect_ratio']=='1:1'
+            assert abs(float(info['format']['duration'])-60)<.03
+            assert abs(float(audios[0]['duration'])-60)<.03
+            subprocess.run(['ffmpeg','-v','error','-i',str(target),'-f','null','-'],check=True)
+            report[ep]={'file':target.name,'duration':info['format']['duration'],'size':target.stat().st_size,'narration_segments':metrics,'voice':'Previously generated Mark Italian narration, reused without speed or pitch change','subscriber_goal':'1000, on-screen throughout and at end'}
+            print('VERIFIED COMPLETE:',target.name,json.dumps(report[ep]),flush=True)
+          (out/'LEGGIMI.txt').write_text('Due nuovi montaggi Fortnite da 60 secondi in verticale Full HD. La voce e\u0300 la stessa registrazione sintetica dei video precedenti, con le frasi rimontate. Le nuove battute aggiuntive e l\u2019invito a raggiungere 1.000 iscritti sono a schermo. Non e\u0300 stata generata nuova narrazione.\n',encoding='utf-8')
+          (out/'verifica.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+          PY
+      - name: Save finished videos
+        uses: actions/upload-artifact@v4
+        with:
+          name: Fortnite_EP2_EP3_CON_VOCE
+          path: finished/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
